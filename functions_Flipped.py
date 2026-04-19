@@ -101,7 +101,6 @@ class Flipping_Analyzer():
             print(f"Loading existing flipped_timing from {flip_timing_fname} ...")
             with open(flip_timing_fname, 'rb') as f:
                 self.flip_timing_list = pickle.load(f)
-            return
         
         #----- for no data loading -----
         with open("lengths.txt", "r") as f:
@@ -118,7 +117,7 @@ class Flipping_Analyzer():
                 self.flip_lengths.append(lengths_list[idx])
         assert(self.n_flip == len(self.flip_idxs))
         for i, f_len in enumerate(self.flip_lengths):
-            assert(f_len==flip_lengths_list[i])
+            assert(f_len==len(self.flip_timing_list[i]))
         return
         #--------------------------------
         
@@ -180,10 +179,17 @@ class Flipping_Analyzer():
             true_idx = self.flip_idxs[i]
             path_df = pd.DataFrame(columns=['orig', 'relv', 'flip'])
             event_row = self.event_df_step.iloc[true_idx]
+            
+            
             clean_row = event_row[pd.notna(event_row)]
             sorted_row = clean_row.sort_values()
             for evt, step in sorted_row.items():
                 if evt in self.events:
+                    if step not in timing_df.index:
+                        print(f"true_idx = {true_idx}")
+                        print(f"event_row = {event_row}")
+                        print(f"evt = {evt}, step={step}, timing_df={timing_df}")
+                    
                     path_df.loc[evt] = list(timing_df.loc[step])
             flip_path_dict[true_idx] = path_df
 
@@ -199,6 +205,13 @@ class Flipping_Analyzer():
             sorted_row = clean_row.sort_values()
             for evt, step in sorted_row.items():
                 if evt in self.events:
+                    
+                    if step not in my_timing_df.index:
+                        print(f"idx = {idx}")
+                        print(f"idx_row = {idx_row}")
+                        print(f"evt = {evt}, step={step}, my_timing_df={my_timing_df}")
+                    
+                    
                     path_df.loc[evt] = list(my_timing_df.loc[step]) # 't_seq', 'reltv_t_seq'
             all_path_dict[idx] = path_df
         
@@ -366,7 +379,7 @@ class Flipping_Analyzer():
                   "#FF8C00", "#9400D3", "#2F4F4F"] # Dark Orange, Dark Violet, Dark Slate Gray
         
         n_pat = len(slt_flip_idxs)
-        plt_title_list = [r"\bf{Original}", r"\bf{Relative}", r"\bf{Counterfactual"]
+        plt_title_list = [r"$\mathbf{Original}$", r"$\mathbf{Relative}$", r"$\mathbf{Counterfactual}$"]
 
         for i, plt_key in enumerate(typ_list):
             ax = axes[i]
