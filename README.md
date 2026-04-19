@@ -14,4 +14,5 @@ Allow the users to interactively explored trajectories using any events of inter
 (This is the upgraded results included by the revised KDD-ai4sciences paper)
 
 
-main_LITT_Flipped.ipynb : Compute the Counterfactual timing of positive cases to show "what-if" they were negative
+main_LITT_Flipped.ipynb : Compute the Counterfactual timing of positive cases to show "what-if" they were negative.
+Allow the users to interactively compare counterfactual changes of any events of interest
