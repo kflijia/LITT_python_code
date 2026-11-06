@@ -135,71 +135,11 @@ class Event_Analyzer():
             pickle.dump(data_to_save, f)
     
     def load_timing(self):
-        # self.fname_prex = self.data_manager.split_fname_prex
-        # self.train_indices = self.data_manager.train_indices
-        
-        self.fname_prex = 'full_'
-        self.train_indices = range(self.n_seqs)
-        
-        timing_fname = os.path.join(LITT_path, self.fname_prex + 'LITT_timing.pkl')
-        if os.path.exists(timing_fname):
-            print(f"Loading existing timing from {timing_fname} ...")
-            with open(timing_fname, 'rb') as f:
-                self.timing_list, self.label_list = pickle.load(f)
-            return
-        
-        sys.exit("No source data! Please load "+timing_fname)
-        
-        checkpoint_fname = os.path.join(LITT_path, self.fname_prex + 'LITT_checkpoint.pkl')
-        print(f"Compute timing ... \n Loading T2 checkpoint from {checkpoint_fname} ...")
-        with open(checkpoint_fname, 'rb') as f:
-            checkpoint = pickle.load(f)
-            
-        self.gamma_coeff.load_gamma_state(checkpoint['gamma_state_dict'])
-        self.gamma_coeff.eval()
-        
-        train_dataloader_Event, test_dataloader_Event = self.data_manager.get_DataLoader('Event')
-        self.timing_list = [np.nan for i in range(self.n_seqs)]
-        self.label_list = [np.nan for i in range(self.n_seqs)]
-        
-        with torch.no_grad():
-            # training timing only
-            for time_sequences, _, list_coeff_seq, _, _, seq_idxs, target_masks in train_dataloader_Event:
-                for i, t_seq in enumerate(time_sequences):
-                    idx = seq_idxs[i]
-                    full_coeff_seq = list_coeff_seq[i]
-                    avg_coeff_seq = []
-                    for coeff in full_coeff_seq:
-                        avg_coeff_seq.append(torch.mean(coeff))
-                    avg_coeff_seq = torch.tensor(avg_coeff_seq).unsqueeze(-1)
-                    
-                    coeff_seq = avg_coeff_seq[1:]   # (seq_len-1, 1)  the first coeff is 0.0
-                    gamma_seq = -torch.log(1-coeff_seq)
-                    
-                    t_seq = t_seq.cpu().numpy().flatten()
-                    gamma_seq = gamma_seq.cpu().numpy().flatten()
-                    
-                    delta_t_seq = t_seq[1:] - t_seq[:-1]
-                    reltv_delta_t_seq = delta_t_seq * gamma_seq
-                    reltv_t_seq = [0]
-                    
-                    for j in range(len(reltv_delta_t_seq)):
-                        j_reltv_t = sum(reltv_delta_t_seq[:(j+1)])
-                        # if j_reltv_t==float('Inf'):
-                        #     cut_len = len(reltv_t_seq)
-                        #     t_seq = t_seq[:cut_len] 
-                        #     break
-                        # else:
-                        reltv_t_seq.append(float(j_reltv_t))
-                    
-                    bi_label = target_masks[i].cpu().numpy()
-                    timing_df = {'t_seq':t_seq, 'reltv_t_seq':reltv_t_seq}
-                    timing_df = pd.DataFrame(timing_df)
-                    self.timing_list[idx] = timing_df
-                    self.label_list[idx] = bi_label
-
-        with open(timing_fname, 'wb') as f:
-            pickle.dump((self.timing_list, self.label_list), f)
+        #...
+        #########################
+        # The core code is hidden due to copyright issue
+        # Contact the author for full version
+        #########################
         
 
     def do_analyze(self, log_out=True):
