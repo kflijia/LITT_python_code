@@ -73,103 +73,13 @@ class Cell_LSTM(nn.Module):
         return T_rate
 
         
-class Model_LITT(nn.Module):
-    def __init__(self, input_size, hidden_size, outcome_size):
-        super().__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.outcome_size = outcome_size
-        
-        self.cell = Cell_LSTM(input_size, hidden_size)
-        
-        # Value head (for numeric y)
-        self.value_head = nn.Sequential(
-            nn.Linear(hidden_size, outcome_size),
-            nn.Sigmoid()  # Values in [0, 1] multiplying with max_len
-        )
-        # Mask head (outputs logits, no sigmoid)
-        self.mask_head = nn.Linear(self.hidden_size+1, outcome_size)  # Logits for BCEWithLogitsLoss
-        
-        # Initialize parameters
-        linear_layer = self.value_head[0]
-        nn.init.kaiming_normal_(linear_layer.weight, mode='fan_out', nonlinearity='relu')
-        nn.init.zeros_(linear_layer.bias)
-        
-        
-    def forward(self, packed_coeff, packed_X, last_day_rates, record_state = False):
-        x = packed_X.data
-        batch_sizes = packed_X.batch_sizes
-        unsorted_indices = packed_X.unsorted_indices
-        #sorted_indices = packed_X.sorted_indices
-        
-        #sorted_gammas = gamma_params[sorted_indices, :, :]
-        x_coeffs = 1 - packed_coeff.data    # 0.0 < coeff <=1.0
-        
-        batch_size = batch_sizes[0]
-        h = torch.zeros(batch_size, self.hidden_size).to(x.device)
-        c = torch.zeros(batch_size, self.hidden_size).to(x.device)
-        
-        if record_state:
-            cell_states = [[] for _ in range(batch_size)]  # List of lists for each sequence
-            hidden_states = [[] for _ in range(batch_size)]
-        
-        idx = 0
-        for t, bs in enumerate(batch_sizes):
-            #print("=== debug t=",t,"bs=",bs)
-            x_t = x[idx:idx + bs] # shape (bs, input_size)
-            h_t = h[:bs]
-            c_t = c[:bs]
-            
-            h_t, c_t = self.cell(x_t, (h_t, c_t))
-            
-            # --- LITT gate coeff ---
-            #gamma_t = x_gamma[idx:idx + bs] # shape (bs, hidden_size)
-            #gamma_t = sorted_gammas[:bs, t] # shape (bs, hidden_size) 
-            #gamma_t_zeros = torch.zeros_like(gamma_t).to(x.device)
-            # 0.0 < coeff_t <=1.0
-            #coeff_t = torch.exp(-torch.max(gamma_t_zeros, gamma_t))  # shape (bs, hidden_size) 
-            
-            coeff_t = x_coeffs[idx:idx + bs]  # shape (bs, hidden_size) 
-            
-            # # only for record, 1.0 > rec_coeff_t >=0
-            # rec_coeff_t = 1 - coeff_t  # shape (bs, hidden_size) 
-            # for i in range(bs):
-            #     gamma_coeffs[i].append(rec_coeff_t[i].clone().detach())
-            
-            # --- apply gamma ---
-            c_t = coeff_t * c_t
-            
-            if record_state:
-                for i in range(bs):
-                    cell_states[i].append(c_t[i].clone())
-                    hidden_states[i].append(h_t[i].clone())
+#class Model_LITT(nn.Module):
+#...
+#########################
+# The core code is hidden due to copyright issue
+# Contact the author for full version
+#########################
 
-            # --- update ---
-            h = torch.cat([h_t, h[bs:]], dim=0) if bs < h.size(0) else h_t.clone()
-            c = torch.cat([c_t, c[bs:]], dim=0) if bs < c.size(0) else c_t.clone()
-            idx += bs
-        
-        if record_state:
-            cell_states = [torch.stack(cell_states[i], dim=0) for i in unsorted_indices]    # [seq_len, hidden_size] for each elemant
-            hidden_states = [torch.stack(hidden_states[i], dim=0) for i in unsorted_indices]
-
-        # Use final hidden state for prediction
-        final_h = h[unsorted_indices]  # Reorder to original batch order
-        #y_value = self.max_len * self.value_head(final_h)  # (batch_size, output_size), in [0,max_len]
-        y_value = self.value_head(final_h)
-        
-        last_day_rates = last_day_rates.unsqueeze(1)
-        y_mask_input = torch.cat([final_h, last_day_rates], dim=1)
-        y_mask_logits = self.mask_head(y_mask_input)
-        y_mask = torch.sigmoid(y_mask_logits)   # (batch_size, output_size), in [0,1]
-        
-        # Final output: mask * values
-        y_pred = y_mask * y_value  # (batch_size, output_size)
-        
-        if record_state:
-            return y_mask, y_value, y_pred, y_mask_logits, [cell_states, hidden_states]
-        else:
-            return y_mask, y_value, y_pred, y_mask_logits
 
 
 
@@ -305,156 +215,19 @@ class Trainer_LITT():
         return
 
     def run_training(self, n_epochs, train_dataloader, debug_level = 0, flipping_tag = False):
-        if not flipping_tag:
-            self.check_requires_grad()
-        
-        if len(range(self.max_epoch, n_epochs)) == 0:
-            max_epoch = self.max_epoch
-            print(f"LITT Training Skipped! n_epochs = {n_epochs} is smaller than max_epoch+1 = {max_epoch+1}")
-            return
-
-
-        for epoch in range(self.start_epoch, n_epochs):
-            if debug_level>=1:
-                print(f"LITT Epoch {epoch}/{n_epochs-1} ")
-            else:
-                print(f"LITT Epoch {epoch}/{n_epochs-1}:", end='')
-
-            train_loss = 0.0
-            train_loss_mask = 0.0
-            train_loss_res = 0.0
-            batch_idx = 0
-            
-            init_gammas = self.gamma_coeff.get_gamma_state(self.train_indices)
-            lr_change_message = ''
-
-            # batch gamma_params is gamma_coeff's output is in data_manager with padded_T input 
-            # batch packed_X is x for model_LITT input
-            for packed_coeff, packed_X, last_day_rates, seq_idxs, target_values, target_masks in train_dataloader:
-                # Zero gradients for both optimizers
-                self.optimizer_mask.zero_grad()
-                self.optimizer_result.zero_grad()
-                
-                _, _, out_results, out_mask_logits = self.model_LITT(packed_coeff, packed_X, last_day_rates)
-                
-                # Compute losses
-                # --- individual losses for records only ---
-                masks_pred = out_mask_logits.clone().detach() 
-                masks_label = target_masks.clone().detach()
-                res_pred = out_results.clone().detach()
-                res_label = target_values.clone().detach()
-                for i, idx in enumerate(seq_idxs):
-                    idx = idx.item()
-                    my_loss_m = self.loss_mask(masks_pred[i], masks_label[i])   # (seq_len, hidden_size)
-                    my_loss_r = self.loss_result(res_pred[i], res_label[i])
-                    my_loss = my_loss_m + my_loss_r
-                    self.pat_loss_trace[idx].append(my_loss)
-                
-                # --- overall loss for backward propogation ---
-                mask_loss = self.loss_mask(out_mask_logits, target_masks)
-                res_loss = self.loss_result(out_results, target_values)
-                days_loss = torch.sqrt(res_loss).item() * self.max_len
-                
-                # Combined loss (adjust weights as needed) Backward pass and optimize
-                loss = mask_loss + res_loss
-                loss.backward()
-                
-                self.optimizer_mask.step()
-                self.optimizer_result.step()
-                if batch_idx == 0:
-                    mask_lr_prev = self.optimizer_mask.param_groups[0]['lr']
-                    self.scheduler_mask.step()
-                    mask_lr_new = self.scheduler_mask.get_last_lr()[0]
-                    if mask_lr_new != mask_lr_prev:
-                        lr_change_message += (f"          *** optimizer_mask Learning rate changed from {mask_lr_prev:.6f} to {mask_lr_new:.6f} at epoch {epoch} *** \n")
-                    
-                    result_lr_prev = self.optimizer_result.param_groups[0]['lr']
-                    self.scheduler_result.step()
-                    result_lr_new = self.scheduler_result.get_last_lr()[0]
-                    if result_lr_new != result_lr_prev:
-                        lr_change_message += (f"          *** optimizer_result Learning rate changed from {result_lr_prev:.6f} to {result_lr_new:.6f} at epoch {epoch} *** ")
-                
-                if debug_level>=2:
-                    for i, idx in enumerate(seq_idxs):
-                        idx = idx.item()
-                        if len(self.pat_loss_trace[idx])>1:
-                            short_losses = [f"{num:.4f}" for num in self.pat_loss_trace[idx]]
-                            short_trace = ", ".join(short_losses)
-                            print(f"        idx = {idx} Loss_trace = [{short_trace}] ")
-                if debug_level>=1:
-                    print(f"    Batch {batch_idx}: Loss = {loss.item():.4f} mask {mask_loss.item():.4f} + result {res_loss.item():.4f}  days {days_loss:.2f}")
-                batch_idx += 1
-                train_loss += loss.item()
-                train_loss_mask += mask_loss.item()
-                train_loss_res += res_loss.item()
-            
-            W_rate, b_rate = self.gamma_coeff.compare_gamma_state(init_gammas)
-            
-            avg_train_loss = train_loss / len(train_dataloader)
-            avg_train_loss_mask = train_loss_mask / len(train_dataloader)
-            avg_train_loss_res = train_loss_res / len(train_dataloader)
-            avg_train_loss_res_days = np.sqrt(avg_train_loss_res) * self.max_len
-            print(f"  Loss (avg) = {avg_train_loss:.4f}  mask {avg_train_loss_mask:.4f}  + result {avg_train_loss_res:.4f} days {avg_train_loss_res_days:.2f} ", end='')
-            print(f" gamma changed: W = {W_rate*100:.1f}%, b = {b_rate*100:.1f}% ", end='')
-            
-            if avg_train_loss < self.best_loss:
-                self.best_loss = avg_train_loss
-                self.start_epoch = epoch + 1
-                self.max_epoch = self.start_epoch
-                if not flipping_tag:
-                    self.saving()
-                    print("  -- LITT Model saved with trained gamma.")
-                else:
-                    print("")
-            else:
-                print("")
-            
-            if len(lr_change_message)>0:
-                print(lr_change_message)
-            
-        self.max_epoch = epoch + 1
-        if not flipping_tag:
-            self.saving()
+        #...
+        #########################
+        # The core code is hidden due to copyright issue
+        # Contact the author for full version
+        #########################
         return
 
     def run_eval(self, in_dataloader, in_split_str, save_tag = True, print_tag = False, in_opt_th = None):
-        #warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
-        
-        assert(in_split_str in ['testing', 'training'])
-        test_label_fname = os.path.join(result_path, in_split_str, self.fname_prex + 'LITT_test_label.npy')
-        
-        y_values_arr = {'pred':[], 'label':[]}
-        y_days_arr = {'pred':[], 'label':[], 'last':[]}
-        y_masks_arr = {'pred':[], 'label':[]}
-        self.model_LITT.eval()
-        self.gamma_coeff.eval()
-        max_len = self.max_len.cpu()
-        with torch.no_grad():
-            for packed_coeff, packed_X, last_day_rates, seq_idxs, target_values, target_masks in in_dataloader:
-                out_masks, _, out_values, _ = self.model_LITT(packed_coeff, packed_X, last_day_rates)
-                for i, idx in enumerate(seq_idxs):
-                    #idx = idx.item()
-                    mask_pred = out_masks[i].cpu()   # (outcome_size)
-                    mask_label = target_masks[i].cpu()
-                    value_pred = out_values[i].cpu()
-                    value_label = target_values[i].cpu()
-                    day_pred = value_pred * max_len
-                    day_label = value_label * max_len
-                    day_last = last_day_rates[i].cpu() * max_len
-                    y_values_arr['label'].append(value_label)
-                    y_values_arr['pred'].append(value_pred)
-                    y_days_arr['label'].append(day_label)
-                    y_days_arr['pred'].append(day_pred)
-                    y_days_arr['last'].append(day_last)
-                    y_masks_arr['label'].append(mask_label)
-                    y_masks_arr['pred'].append(mask_pred)
-         
-            y_dict = {'values':y_values_arr, 'days':y_days_arr, 'masks':y_masks_arr}
-            y_oc_df, opti_th_arr = get_performance(y_dict, self.outcomes, 'LITT', print_tag, in_opt_th)
-            
-            if save_tag:
-                np.save(test_label_fname, y_oc_df)
-                
+        #...
+        #########################
+        # The core code is hidden due to copyright issue
+        # Contact the author for full version
+        #########################
         return
     
     #---------------------------------------------
